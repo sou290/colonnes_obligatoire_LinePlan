@@ -44,6 +44,34 @@ COLONNES_PROMO = [
 ]
 
 COLONNES_NUMERIQUES = ["PCBMASTERPICKING", "SPCBINNERPICKING", "PCBPROMO", "PCBIMPLANT"]
+# Colonnes numériques pour l'onglet Promo (sans PCBIMPLANT)
+COLONNES_NUMERIQUES_PROMO = ["PCBMASTERPICKING", "SPCBINNERPICKING", "PCBPROMO"]
+
+def verifier_colonnes_dupliquees(df, nom_feuille):
+    """Vérifie s'il y a des colonnes dupliquées dans les en-têtes (ligne 1)"""
+    colonnes = df.columns.tolist()
+    colonnes_dupliquees = []
+    colonnes_vues = {}
+    
+    for i, col in enumerate(colonnes):
+        if col in colonnes_vues:
+            if col not in colonnes_dupliquees:
+                colonnes_dupliquees.append(col)
+        else:
+            colonnes_vues[col] = i
+    
+    if colonnes_dupliquees:
+        return {
+            'statut': 'ERREUR',
+            'colonnes_dupliquees': colonnes_dupliquees,
+            'details': f"Colonnes dupliquées détectées: {', '.join(colonnes_dupliquees)}"
+        }
+    else:
+        return {
+            'statut': 'OK',
+            'colonnes_dupliquees': [],
+            'details': 'Aucune colonne dupliquée détectée'
+        }
 
 def verifier_colonnes_obligatoires(df, colonnes_requises, nom_feuille):
     """Vérifie la présence des colonnes obligatoires dans une feuille"""
@@ -236,6 +264,7 @@ def traiter_fichier(nom_fichier, contenu):
         try:
             df_ref = pd.read_excel(io.BytesIO(contenu), engine="pyxlsb", sheet_name="Référentiel")
             resultats['referentiel'] = {
+                'colonnes_dupliquees': verifier_colonnes_dupliquees(df_ref, "Référentiel"),
                 'colonnes': verifier_colonnes_obligatoires(df_ref, COLONNES_REFERENTIEL, "Référentiel"),
                 'codeclient': verifier_codeclient(df_ref),
                 'colonnes_numeriques': verifier_colonnes_numeriques(df_ref, COLONNES_NUMERIQUES, "CODECLIENT"),
@@ -249,9 +278,10 @@ def traiter_fichier(nom_fichier, contenu):
         try:
             df_promo = pd.read_excel(io.BytesIO(contenu), engine="pyxlsb", sheet_name="Promo")
             resultats['promo'] = {
+                'colonnes_dupliquees': verifier_colonnes_dupliquees(df_promo, "Promo"),
                 'colonnes': verifier_colonnes_obligatoires(df_promo, COLONNES_PROMO, "Promo"),
                 'client': verifier_client(df_promo),
-                'colonnes_numeriques': verifier_colonnes_numeriques(df_promo, COLONNES_NUMERIQUES, "CLIENT"),
+                'colonnes_numeriques': verifier_colonnes_numeriques(df_promo, COLONNES_NUMERIQUES_PROMO, "CLIENT"),
                 'nb_lignes': len(df_promo)
             }
         except Exception as e:
@@ -260,6 +290,8 @@ def traiter_fichier(nom_fichier, contenu):
 
         # Déterminer le statut global
         if 'referentiel' in resultats and 'colonnes' in resultats['referentiel']:
+            if resultats['referentiel']['colonnes_dupliquees']['statut'] == 'ERREUR':
+                resultats['statut_global'] = 'ERREUR'
             if resultats['referentiel']['colonnes']['statut'] == 'ERREUR':
                 resultats['statut_global'] = 'ERREUR'
             if resultats['referentiel']['codeclient']['statut'] == 'ERREUR':
@@ -269,6 +301,8 @@ def traiter_fichier(nom_fichier, contenu):
                     resultats['statut_global'] = 'ERREUR'
 
         if 'promo' in resultats and 'colonnes' in resultats['promo']:
+            if resultats['promo']['colonnes_dupliquees']['statut'] == 'ERREUR':
+                resultats['statut_global'] = 'ERREUR'
             if resultats['promo']['colonnes']['statut'] == 'ERREUR':
                 resultats['statut_global'] = 'ERREUR'
             if resultats['promo']['client']['statut'] == 'ERREUR':
@@ -316,6 +350,13 @@ def afficher_resultats_streamlit(tous_resultats):
                     ref = resultat['referentiel']
                     st.info(f"Nombre de lignes: {ref['nb_lignes']}")
 
+                    # Vérification des colonnes dupliquées
+                    dup_status = ref['colonnes_dupliquees']
+                    if dup_status['statut'] == 'OK':
+                        st.success(f"✅ Colonnes dupliquées: {dup_status['details']}")
+                    else:
+                        st.error(f"❌ Colonnes dupliquées: {dup_status['details']}")
+
                     # Colonnes
                     col_status = ref['colonnes']
                     if col_status['statut'] == 'OK':
@@ -355,6 +396,13 @@ def afficher_resultats_streamlit(tous_resultats):
                     promo = resultat['promo']
                     st.info(f"Nombre de lignes: {promo['nb_lignes']}")
 
+                    # Vérification des colonnes dupliquées
+                    dup_status = promo['colonnes_dupliquees']
+                    if dup_status['statut'] == 'OK':
+                        st.success(f"✅ Colonnes dupliquées: {dup_status['details']}")
+                    else:
+                        st.error(f"❌ Colonnes dupliquées: {dup_status['details']}")
+
                     # Colonnes
                     col_status = promo['colonnes']
                     if col_status['statut'] == 'OK':
@@ -372,7 +420,7 @@ def afficher_resultats_streamlit(tous_resultats):
                     else:
                         st.error(f"❌ CLIENT: {client_status['details']}")
 
-                    # Colonnes numériques pour Promo
+                    # Colonnes numériques pour Promo (sans PCBIMPLANT)
                     if 'colonnes_numeriques' in promo:
                         st.write("**Vérification des colonnes numériques:**")
                         for col_name, col_info in promo['colonnes_numeriques'].items():
@@ -398,6 +446,7 @@ def main():
     st.markdown("""
     ### 📋 Description
     Cet outil vérifie la conformité de vos fichiers Excel (.xlsb) en analysant :
+    - **Vérification des colonnes dupliquées** : Détecte les colonnes en double dans les en-têtes
     - **Onglet Référentiel** : Présence des colonnes obligatoires, validité des codes clients, format des colonnes numériques
     - **Onglet Promo** : Présence des colonnes obligatoires, validité des codes clients, format des colonnes numériques
     """)
@@ -415,122 +464,12 @@ def main():
         **Codes clients valides:**
         - FRCA
         - FRCH
+        
+        **Nouvelles vérifications:**
+        - Détection des colonnes dupliquées
+        - PCBIMPLANT retiré de l'onglet Promo
         """)
     
     # Upload des fichiers
     st.header("📂 Upload des fichiers")
-    uploaded_files = st.file_uploader(
-        "Sélectionnez vos fichiers .xlsb",
-        type=['xlsb'],
-        accept_multiple_files=True,
-        help="Vous pouvez sélectionner plusieurs fichiers à la fois"
-    )
-    
-    if uploaded_files:
-        st.success(f"✅ {len(uploaded_files)} fichier(s) sélectionné(s)")
-        
-        # Bouton de traitement
-        if st.button("🚀 Lancer la vérification", type="primary"):
-            tous_resultats = []
-            
-            # Barre de progression
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i, uploaded_file in enumerate(uploaded_files):
-                status_text.text(f'Traitement en cours: {uploaded_file.name}...')
-                progress_bar.progress((i + 1) / len(uploaded_files))
-                
-                try:
-                    # Lire le contenu du fichier
-                    contenu = uploaded_file.read()
-                    uploaded_file.seek(0)  # Reset pour une éventuelle relecture
-                    
-                    # Traiter le fichier
-                    resultat = traiter_fichier(uploaded_file.name, contenu)
-                    tous_resultats.append(resultat)
-                    
-                except Exception as e:
-                    st.error(f"❌ Erreur lors du traitement de {uploaded_file.name}: {str(e)}")
-                    st.write("Détails de l'erreur:")
-                    st.code(traceback.format_exc())
-            
-            status_text.text('Traitement terminé!')
-            
-            # Affichage des résultats
-            if tous_resultats:
-                st.header("📈 Résultats de la vérification")
-                afficher_resultats_streamlit(tous_resultats)
-                
-                # Option de téléchargement (optionnel)
-                st.markdown("---")
-                st.subheader("💾 Export des résultats")
-                
-                # Créer un résumé textuel
-                rapport_texte = f"RAPPORT DE VÉRIFICATION - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                rapport_texte += "=" * 80 + "\n\n"
-                
-                total_fichiers = len(tous_resultats)
-                fichiers_ok = sum(1 for r in tous_resultats if r['statut_global'] == 'OK')
-                fichiers_erreur = total_fichiers - fichiers_ok
-                
-                rapport_texte += f"RÉSUMÉ GLOBAL\n"
-                rapport_texte += f"Total fichiers traités: {total_fichiers}\n"
-                rapport_texte += f"Fichiers conformes: {fichiers_ok}\n"
-                rapport_texte += f"Fichiers avec erreurs: {fichiers_erreur}\n\n"
-                
-                for resultat in tous_resultats:
-                    rapport_texte += f"FICHIER: {resultat['nom_fichier']}\n"
-                    rapport_texte += f"Statut: {'CONFORME' if resultat['statut_global'] == 'OK' else 'NON CONFORME'}\n"
-                    
-                    # Détails Référentiel
-                    if 'referentiel' in resultat:
-                        if 'erreur' in resultat['referentiel']:
-                            rapport_texte += f"  Référentiel: ERREUR - {resultat['referentiel']['erreur']}\n"
-                        else:
-                            ref = resultat['referentiel']
-                            rapport_texte += f"  Référentiel ({ref['nb_lignes']} lignes):\n"
-                            col_status = ref['colonnes']
-                            if col_status['statut'] == 'OK':
-                                rapport_texte += f"    Colonnes: OK ({col_status['nb_colonnes_totales']})\n"
-                            else:
-                                rapport_texte += f"    Colonnes: {col_status['nb_colonnes_manquantes']} manquantes\n"
-                            
-                            cc_status = ref['codeclient']
-                            rapport_texte += f"    CODECLIENT: {cc_status['statut']} - {cc_status['details']}\n"
-                    
-                    # Détails Promo
-                    if 'promo' in resultat:
-                        if 'erreur' in resultat['promo']:
-                            rapport_texte += f"  Promo: ERREUR - {resultat['promo']['erreur']}\n"
-                        else:
-                            promo = resultat['promo']
-                            rapport_texte += f"  Promo ({promo['nb_lignes']} lignes):\n"
-                            col_status = promo['colonnes']
-                            if col_status['statut'] == 'OK':
-                                rapport_texte += f"    Colonnes: OK ({col_status['nb_colonnes_totales']})\n"
-                            else:
-                                rapport_texte += f"    Colonnes: {col_status['nb_colonnes_manquantes']} manquantes\n"
-                            
-                            client_status = promo['client']
-                            rapport_texte += f"    CLIENT: {client_status['statut']} - {client_status['details']}\n"
-                    
-                    rapport_texte += "\n"
-                
-                # Bouton de téléchargement
-                st.download_button(
-                    label="📥 Télécharger le rapport",
-                    data=rapport_texte,
-                    file_name=f"rapport_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
-                )
-    
-    else:
-        st.info("👆 Veuillez sélectionner au moins un fichier .xlsb pour commencer")
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("💡 **Aide**: En cas de problème, vérifiez que vos fichiers sont bien au format .xlsb et contiennent les onglets 'Référentiel' et 'Promo'")
-
-if __name__ == "__main__":
-    main()
+    uploaded_files = st.file_uploader
